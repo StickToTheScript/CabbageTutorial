@@ -1,0 +1,200 @@
+program new;
+{$define SMART}
+{$I SRL/OSR.simba}
+{$I RSWalker/Walker.simba}
+
+const //This is where we declare our constants
+  LOGIN_NAME = '';    //Username/Email
+  LOGIN_PASS = '';    //Password
+  RS_WORLD   = -1;    //Desired World (-1 = Random)
+  IS_MEMBER  = false; //True if your player is a Member
+
+var  //This is where we declare our variables
+  Walk: TRSWalker;            //Used for RSWalker (to walk paths)
+  pBank, pPatch: TPointArray; //Paths from Patch to Bank, and Bank to Path
+  Antiban: TAntiban;          //Used for Antiban procedures
+
+{*******************************************************************************
+  Name: declarePlayers();
+  Function: Sets the proper variables using the constants above to allow
+    a successful login.
+*******************************************************************************}
+procedure declarePlayers();
+begin
+  with Players.New()^ do
+  begin
+    LoginName  := LOGIN_NAME;
+    Password   := LOGIN_PASS;
+    IsActive   := True;
+    IsMember   := IS_MEMBER;
+    World      := RS_WORLD;
+  end;
+  Players.SetCurrent(0);
+end;
+
+{*******************************************************************************
+  Name: setupAntiban();
+  Function: Sets up the built-in antiban included with the SRL include.
+  NOTE: Please feel free to customize this and make it unique to you.
+*******************************************************************************}
+procedure setupAntiban();
+begin
+  Antiban.Init(SKILL_TOTAL, 4);
+
+  Antiban.AddTask([@Antiban.LoseFocus,     ONE_MINUTE*5]);
+  Antiban.AddTask([@Antiban.HoverPlayers,  ONE_MINUTE*8]);
+  Antiban.AddTask([@Antiban.CheckStats,    ONE_MINUTE*10]);
+  Antiban.AddTask([@Antiban.OpenRandomTab, ONE_MINUTE*10]);
+  Antiban.AddTask([@Antiban.VeryShortBreak,ONE_MINUTE*25]);
+  Antiban.AddTask([@Antiban.DoMiscStuff,   ONE_MINUTE*25]);
+  Antiban.AddTask([@Antiban.RandomCompass, ONE_MINUTE*45]);
+
+  Antiban.AddBreak([35 * ONE_MINUTE, 05 * ONE_MINUTE, 0.05]);
+  Antiban.AddBreak([02 * ONE_HOUR,   15 * ONE_MINUTE, 0.20]);
+  Antiban.AddBreak([05 * ONE_HOUR,   45 * ONE_MINUTE, 0.85]);
+  Antiban.AddBreak([16 * ONE_HOUR,   08 * ONE_HOUR,   0.99]);
+end;
+
+{*******************************************************************************
+  Name: myAntiban();
+  Function: Executes the antiban and checks for random events.
+*******************************************************************************}
+Procedure myAntiban;
+begin
+  if not SRL.isLoggedIn() then
+    Exit;
+
+  SRL.DismissRandom();  //Dismiss random events if any are found
+  Antiban.DoAntiban();  //Do the antiban
+end;
+
+{*******************************************************************************
+  Name: doBank();
+  Function:
+*******************************************************************************}
+function doBank(): boolean;
+begin
+  myAntiban();                    //Do antiban
+  BankScreen.Open(blDrynor);      //Open bank using SRL's built in banker function
+  if BankScreen.IsOpen(5000) then //If bank screen is open sometime within the 5 sec wait
+  begin
+    wait(randomRange(150, 500));  //Have a realistic wait time before we actually do anything
+    BankScreen.DepositAll();      //Deposit all cabbages
+    Result := True;               //We want to return true when the function finishes, so we set Result to True
+  end;
+end;
+
+{*******************************************************************************
+  Name: walkTo(path);
+  Function: Walks the path given by the 'path' variable.
+*******************************************************************************}
+procedure walkTo(path: TPointArray);
+begin
+  myAntiban(); //Do Antiban
+  Walk.WalkPath(path); //Walk our path passed to the procedure
+end;
+
+{*******************************************************************************
+  Name: waitLoop();
+  Function: Waits until we have collected our cabbage
+*******************************************************************************}
+procedure waitLoop();
+var
+  InvCount: Integer;
+  T: TTimeMarker;
+begin
+  if not SRL.isLoggedIn() then
+    Exit;
+
+  InvCount := Inventory.Count(); //Gets the count in our inventory
+  T.Start;                       //Start our timer
+  repeat
+    myAntiban();                 //Do Antiban
+    wait(randomRange(75, 250));  //Wait a random amount of time
+  until((Inventory.Count() > InvCount) or (T.GetTime > 7000)); //Stop repeating once inv count changes or we time out
+end;
+
+{*******************************************************************************
+  Name: findCabbages();
+  Function: Locates cabbage in the field. Will print on screen if using SMART.
+*******************************************************************************}
+procedure findCabbages();
+var
+  TPA, Cabbage: TPointArray;
+  ATPA: T2DPointArray;
+begin
+  if not SRL.isLoggedIn() then  //If not logged in, then terminate script
+    TerminateScript;
+
+  if (SRL.FindColors(TPA, CTS2(3127688, 27, 0.04, 0.87), MainScreen.GetBounds) > 0) then //If we find colours at all then...
+  begin
+    ATPA := TPA.Cluster(2);                 //Group them within a max pixel distance of 2
+    ATPA.FilterSize(100, 500);              //Remove and ATPA of size < 100, or > 500.
+    ATPA.SortByIndex(MainScreen.GetMiddle); //Sort by closest to Middle of the screen
+
+    {$IFDEF SMART}                          //If we are using SMART, then...
+      Smart.Image.DrawATPA(ATPA);           //Draws the ATPA's on the screen.
+                                            //smart.Image.DebugATPA(ATPA) works as well
+    {$ENDIF}                                //End SMART IF
+
+    for Cabbage in ATPA do                  //For every possible cabbage in our ATPA
+    begin
+      Mouse.Move(Cabbage[Random(Length(Cabbage))]); //Move the mouse to the cabbage
+
+      if MainScreen.IsUpText('Cabbage') then        //If the uptext is 'Cabbage', try to click it
+      begin
+         if Mouse.Click(ctRed) then         //Clicks the mouse and looks to see if red 'x' appeard when cicked
+         begin
+          waitLoop();                       //Call to our waitLoop because we want to wait while picking.
+          Break;                            //If found red 'x', then break because we clicked it
+        end;
+      end;
+    end;
+  end;
+  {$IFDEF SMART}
+    Smart.Image.Clear;                      //Clears the ATPA's from screen
+  {$ENDIF}
+end;
+
+{*******************************************************************************
+  Name: setUp();
+  Function: Sets up the script by initializing everything and logging player in.
+*******************************************************************************}
+function setUp(): boolean;
+begin
+  {$IFDEF SMART}                 //If we are using SMART, then...
+    Smart.EnableDrawing := True; //let us draw on SMART
+  {$ENDIF}                       //end SMART IF
+
+  SRL.Setup([]);                 //Setup SRL to allow us to access it's functions.
+
+  Walk.Init('world.png', -1);    //Setup RSWalker by initializing the map we want to use
+
+  //Both paths that we plan to walk (pBank = Patch -> Bank | pPatch = Bank -> Patch)
+  pBank := [Point(4022, 3289), Point(4022, 3332), Point(4059, 3342), Point(4096, 3347), Point(4105, 3394), Point(4127, 3431), Point(4153, 3457), Point(4178, 3478)];
+  pPatch :=  [Point(4178, 3478), Point(4153, 3457), Point(4127, 3431), Point(4105, 3394), Point(4096, 3347), Point(4059, 3342), Point(4022, 3332), Point(4022, 3289)];
+
+  setupAntiban();                //Setup our antiban
+  declarePlayers();              //Declare the player we are using
+
+  if (not SRL.isLoggedIn) then   //If not logged in then..
+  begin
+     Players.LoginCurrent();     //Log player in
+     MainScreen.setAngle(True);  //Sets the camera angle to the highest point
+  end;
+
+  Result := True;
+end;
+
+begin //Main
+  if setUp then        //Calls the setup of the script
+    writeln('We are set up and ready to go!');
+  repeat
+    walkTo(pPatch);     //Walk to Patch
+    while (not Inventory.IsFull) do
+      findCabbages();   //Collect Cabbages until inv is full
+    walkTo(pBank);      //Walk to Bank
+    while (not doBank) do  //Deposit all Cabbages
+      wait(randomRange(75, 250));
+  until(false);         //Repeats forever
+end.
